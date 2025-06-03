@@ -1,0 +1,88 @@
+{
+  "name": "Main Thread",
+  "time": 36.52,
+  "selfTime": 0.1,
+  "children": [
+    {
+      "name": "Update.ScriptRunBehaviourUpdate",
+      "time": 12.87,
+      "selfTime": 1.2,
+      "children": [
+        {
+          "name": "PlayerController.Update",
+          "time": 8.45,
+          "selfTime": 2.1,
+          "children": [
+            {
+              "name": "Transform.SetPosition",
+              "time": 3.2,
+              "selfTime": 3.2,
+              "children": []
+            },
+            {
+              "name": "Rigidbody.MovePosition",
+              "time": 3.15,
+              "selfTime": 3.15,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "CameraController.Update",
+          "time": 3.22,
+          "selfTime": 1.8,
+          "children": [
+            {
+              "name": "Camera.SetWorldToCameraMatrix",
+              "time": 1.42,
+              "selfTime": 1.42,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+  
+    {
+      "name": "Animation.Update",
+      "time": 3.1,
+      "selfTime": 0.4,
+      "children": [
+        {
+          "name": "Animator.Update",
+          "time": 2.7,
+          "selfTime": 1.2,
+          "children": [
+            {
+              "name": "AnimationClip.Sample",
+              "time": 1.5,
+              "selfTime": 1.5,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+  
+    {
+      "name": "Animation.Update2",
+      "time": 3.1,
+      "selfTime": 0.4,
+      "children": [
+        {
+          "name": "Animator.Update2",
+          "time": 2.7,
+          "selfTime": 1.2,
+          "children": [
+            {
+              "name": "AnimationClip.Sample2",
+              "time": 1.5,
+              "selfTime": 1.5,
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
