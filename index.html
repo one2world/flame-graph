@@ -72,6 +72,15 @@
         .btn-generate:hover {
             background-color: #45a049;
         }
+        
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background-color: #5a6268;
+        }
 
         .main-container {
             display: flex;
@@ -733,8 +742,26 @@
         .flame-graph-container {
             flex: 1;
             position: relative;
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: auto;
             background: #1a1a1a;
+        }
+        
+        .flame-graph-container::-webkit-scrollbar {
+            width: 12px;
+        }
+        
+        .flame-graph-container::-webkit-scrollbar-track {
+            background: #2a2a2a;
+        }
+        
+        .flame-graph-container::-webkit-scrollbar-thumb {
+            background: #666;
+            border-radius: 6px;
+        }
+        
+        .flame-graph-container::-webkit-scrollbar-thumb:hover {
+            background: #888;
         }
 
         .flame-graph {
@@ -792,34 +819,7 @@
             }
         }
 
-        .zoom-controls {
-            position: absolute;
-            top: 15px;
-            right: 15px;
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-            z-index: 1000;
-        }
 
-        .zoom-btn {
-            width: 35px;
-            height: 35px;
-            background: rgba(42, 42, 42, 0.9);
-            border: 1px solid #666;
-            border-radius: 4px;
-            color: #e0e0e0;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            font-weight: bold;
-        }
-
-        .zoom-btn:hover {
-            background: rgba(74, 124, 89, 0.9);
-        }
 
         .status-bar {
             background: #2a2a2a;
@@ -911,6 +911,17 @@
                 <button id="parseJsonBtn" class="btn">添加JSON数据</button>
                 <div class="horizontal-items">
                     <button id="loadSampleBtn" class="btn">添加示例数据</button>
+                </div>
+                
+                <!-- 数据聚合功能 -->
+                <div class="data-aggregation-section" style="margin-top: 15px;">
+                    <h4 style="margin: 0 0 10px 0; font-size: 14px; color: #4a7c59;">🔄 数据聚合</h4>
+                    <div class="aggregation-controls">
+                        <button id="flipDataBtn" class="btn btn-secondary" style="width: 100%; margin-bottom: 8px;">数据倒转</button>
+                        <div class="aggregation-info" style="font-size: 11px; color: #888; padding: 8px; background: #f9f9f9; border-radius: 3px; display: none;">
+                            <div id="aggregationResult">等待聚合操作...</div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- 数据文件列表 -->
@@ -1017,6 +1028,7 @@
                 <button id="resetViewBtn" class="btn">重置视图</button>
                 <button id="fitViewBtn" class="btn">适应视图</button>
                 <button id="exportBtn" class="btn">导出图片</button>
+                <button id="downloadDataBtn" class="btn">下载数据</button>
 
                 <div class="setting-item">
                     <label>配色方案</label>
@@ -1080,7 +1092,7 @@
                 this.selectedNode = null;
                 this.focusedNode = null;
                 this.highlightedFunction = null;
-                this.zoomLevel = 1;
+
                 this.panOffset = { x: 0, y: 0 };
                 this.isDragging = false;
                 this.mouseDownPos = { x: 0, y: 0 };
@@ -1181,8 +1193,8 @@
             processNode(node, depth, startTime, totalTime) {
                 const duration = node.duration || node.value || 0;
                 const selfTime = node.selfTime || duration;
-                
-                node.id = node.id || `node_${Math.random().toString(36).substr(2, 9)}`;
+
+                node.id = node.id || `${node.name}_${depth}`;
                 node.depth = depth;
                 node.startTime = startTime;
                 node.duration = duration;
@@ -1340,10 +1352,16 @@
             // }
             
             onDoubleClick(event) {
-                // 重置视图
-                this.zoomLevel = 1;
-                this.panOffset = { x: 0, y: 0 };
-                this.render();
+                const rect = this.canvas.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+                
+                const clickedNode = this.getNodeAtPosition(x, y);
+                if (clickedNode) {
+                    this.selectNode(clickedNode);
+                    // 可以添加双击特殊处理，比如聚焦到节点
+                    console.log('双击选中节点:', clickedNode.name);
+                }
             }
             
             onClick(event) {
@@ -1358,7 +1376,46 @@
             }
             
             getNodeAtPosition(x, y) {
-                // 简化实现，实际应该根据渲染逻辑来查找
+                if (!this.data) return null;
+                
+                const rect = this.canvas.getBoundingClientRect();
+                const canvasWidth = rect.width;
+                const totalTime = this.data.duration || this.data.value || 0;
+                
+                return this.findNodeAtPosition(this.data, 0, 0, canvasWidth, totalTime, x, y);
+            }
+            
+            findNodeAtPosition(node, nodeX, nodeY, width, totalTime, clickX, clickY) {
+                const duration = node.duration || node.value || 0;
+                const nodeWidth = (duration / totalTime) * width;
+                const nodeHeight = this.config.rowHeight;
+                
+                if (nodeWidth < this.config.minWidth) return null;
+                
+                // 检查点击是否在当前节点范围内
+                if (clickX >= nodeX && clickX <= nodeX + nodeWidth && 
+                    clickY >= nodeY && clickY <= nodeY + nodeHeight) {
+                    
+                    // 如果有子节点，先检查子节点
+                    if (node.children && node.children.length > 0) {
+                        let childX = nodeX;
+                        for (const child of node.children) {
+                            const childDuration = child.duration || child.value || 0;
+                            const childWidth = (childDuration / totalTime) * width;
+                            
+                            const childNode = this.findNodeAtPosition(
+                                child, childX, nodeY + nodeHeight, childWidth, totalTime, clickX, clickY
+                            );
+                            
+                            if (childNode) return childNode;
+                            childX += childWidth;
+                        }
+                    }
+                    
+                    // 如果没有找到子节点，返回当前节点
+                    return node;
+                }
+                
                 return null;
             }
             
@@ -1399,7 +1456,7 @@
         let selectedNode = null;
         let focusedNode = null;
         let highlightedFunction = null;
-        let zoomLevel = 1;
+
         let panOffset = { x: 0, y: 0 };
         let isDragging = false;
         let mouseDownPos = { x: 0, y: 0 };
@@ -1445,12 +1502,13 @@
         const resetViewBtn = document.getElementById('resetViewBtn');
         const fitViewBtn = document.getElementById('fitViewBtn');
         const exportBtn = document.getElementById('exportBtn');
+        const downloadDataBtn = document.getElementById('downloadDataBtn');
+        const flipDataBtn = document.getElementById('flipDataBtn');
+        const aggregationResult = document.getElementById('aggregationResult');
         const flameGraphContainer = document.getElementById('flameGraphContainer');
         const emptyState = document.getElementById('emptyState');
         const flameGraph = document.getElementById('flameGraph');
-        const zoomInBtn = document.getElementById('zoomInBtn');
-        const zoomOutBtn = document.getElementById('zoomOutBtn');
-        const zoomResetBtn = document.getElementById('zoomResetBtn');
+
         const statusText = document.getElementById('statusText');
         const tooltip = document.getElementById('tooltip');
 
@@ -1601,9 +1659,75 @@
             }
         }
 
+        // 标准化数据格式
+        function normalizeDataFormat(data) {
+            if (!data) return null;
+            
+            // 检测并转换不同的数据格式
+            
+            // 格式1: 扁平数组格式 [{name, value, children}, ...]
+            if (Array.isArray(data) && data.length > 0) {
+                // 如果是数组，取第一个元素作为根节点
+                if (data.length === 1) {
+                    return normalizeNode(data[0]);
+                } else {
+                    // 多个根节点，创建一个虚拟根节点
+                    return {
+                        name: "Root",
+                        duration: data.reduce((sum, node) => sum + (node.value || node.duration || node.time || 0), 0),
+                        startTime: 0,
+                        type: "system",
+                        children: data.map(node => normalizeNode(node))
+                    };
+                }
+            }
+            
+            // 格式2: 单个对象格式
+            if (typeof data === 'object') {
+                return normalizeNode(data);
+            }
+            
+            return data;
+        }
+        
+        // 标准化单个节点
+        function normalizeNode(node) {
+            if (!node) return null;
+            
+            const normalized = {
+                name: node.name || node.function || node.method || 'Unknown',
+                duration: node.duration || node.value || node.time || node.self || 0,
+                startTime: node.startTime || node.start || 0,
+                type: node.type || (node.name && node.name.includes('.') ? 'system' : 'user'),
+                selfTime: node.selfTime || node.self || 0
+            };
+            
+            // 处理子节点
+            if (node.children && Array.isArray(node.children)) {
+                normalized.children = node.children.map(child => normalizeNode(child)).filter(child => child !== null);
+            } else if (node.calls && Array.isArray(node.calls)) {
+                // 支持calls字段作为children的别名
+                normalized.children = node.calls.map(child => normalizeNode(child)).filter(child => child !== null);
+            }
+            
+            // 处理特殊格式：如果duration为0但有children，计算children的总和
+            if (normalized.duration === 0 && normalized.children && normalized.children.length > 0) {
+                normalized.duration = normalized.children.reduce((sum, child) => sum + (child.duration || 0), 0);
+            }
+            
+            return normalized;
+        }
+        
         // 加载火焰图数据
-        function loadFlameData(data) {
-            flameData = data;
+        function loadFlameData(rawData) {
+            // 首先标准化数据格式
+            const normalizedData = normalizeDataFormat(rawData);
+            if (!normalizedData) {
+                setStatus('数据格式无效');
+                return;
+            }
+            
+            flameData = normalizedData;
             nodeMap = new Map();
             maxDepth = 0;
             selectedNode = null;
@@ -1611,6 +1735,50 @@
             highlightedFunction = null;
             
             nodeMap.clear();
+            
+            // 重新计算startTime确保子节点不超出父节点范围
+            function recalculateStartTimes(node, parentStartTime = 0) {
+                if (!node) return;
+                
+                node.startTime = parentStartTime;
+                
+                if (node.children && node.children.length > 0) {
+                    if (node.children.length === 1) {
+                        // 单个子节点：确保不超出父节点范围
+                        const child = node.children[0];
+                        // 如果子节点duration大于等于父节点，则从父节点开始时间开始
+                        // 否则居中显示
+                        let childStartTime;
+                        if (child.duration >= node.duration) {
+                            childStartTime = parentStartTime;
+                            // 同时调整子节点duration不超过父节点
+                            child.duration = Math.min(child.duration, node.duration);
+                        } else {
+                            childStartTime = parentStartTime + (node.duration - child.duration) / 2;
+                        }
+                        recalculateStartTimes(child, childStartTime);
+                    } else {
+                        // 多个子节点：按顺序排列，确保总时长不超过父节点
+                        let currentTime = parentStartTime;
+                        const totalChildDuration = node.children.reduce((sum, child) => sum + child.duration, 0);
+                        
+                        if (totalChildDuration > node.duration) {
+                            // 如果子节点总时长超过父节点，按比例缩放
+                            const scale = node.duration / totalChildDuration;
+                            node.children.forEach(child => {
+                                child.duration *= scale;
+                            });
+                        }
+                        
+                        node.children.forEach(child => {
+                            recalculateStartTimes(child, currentTime);
+                            currentTime += child.duration;
+                        });
+                    }
+                }
+            }
+            
+            recalculateStartTimes(flameData);
             processFlameData(flameData, nodeMap);
             updateStats(flameData);
             renderFlameGraph();
@@ -1659,12 +1827,12 @@
             }
             
             // 生成唯一ID
-            node.id = `${node.name}_${node.startTime}_${depth}_${Math.random().toString(36).substr(2, 9)}`;
+            _key = `${node.name}_${depth}`;
+            node.id = _key
             node.depth = depth;
             node.parentId = parentId;
             
             // 存储到映射中
-            _key = `${node.name}_${depth}`;
             _nodeMap.set(_key, node);
             
             // 更新最大深度
@@ -2053,13 +2221,32 @@
                 
                 if (node.children && node.children.length > 0) {
                     if (node.children.length === 1) {
-                        // 单个子节点：居中显示
+                        // 单个子节点：确保不超出父节点范围
                         const child = node.children[0];
-                        const centerTime = parentStartTime + (node.duration - child.duration) / 2;
-                        recalculateStartTimes(child, centerTime);
+                        // 如果子节点duration大于等于父节点，则从父节点开始时间开始
+                        // 否则居中显示
+                        let childStartTime;
+                        if (child.duration >= node.duration) {
+                            childStartTime = parentStartTime;
+                            // 同时调整子节点duration不超过父节点
+                            child.duration = Math.min(child.duration, node.duration);
+                        } else {
+                            childStartTime = parentStartTime + (node.duration - child.duration) / 2;
+                        }
+                        recalculateStartTimes(child, childStartTime);
                     } else {
-                        // 多个子节点：按顺序排列
+                        // 多个子节点：按顺序排列，确保总时长不超过父节点
                         let currentTime = parentStartTime;
+                        const totalChildDuration = node.children.reduce((sum, child) => sum + child.duration, 0);
+                        
+                        if (totalChildDuration > node.duration) {
+                            // 如果子节点总时长超过父节点，按比例缩放
+                            const scale = node.duration / totalChildDuration;
+                            node.children.forEach(child => {
+                                child.duration *= scale;
+                            });
+                        }
+                        
                         node.children.forEach(child => {
                             recalculateStartTimes(child, currentTime);
                             currentTime += child.duration;
@@ -2292,9 +2479,8 @@
 
         // 重置视图变换
         function resetViewTransform() {
-            zoomLevel = 1;
             panOffset = { x: 0, y: 0 };
-            flameGraph.style.transform = 'scale(1) translate(0px, 0px)';
+            flameGraph.style.transform = 'translate(0px, 0px)';
         }
 
         // 处理鼠标按下
@@ -2336,10 +2522,13 @@
                     const node = nodeMap.get(nodeId);
                     
                     if (node) {
-                        // 区分单击和双击 - 缩短双击检测时间以提高响应性
+                        // 区分单击和双击 - 增加双击检测时间以提高响应性
                         const now = Date.now();
-                        if (now - lastClickTime < 250 && selectedNode && selectedNode.id === node.id) {
+                        console.log('点击时间间隔:', now - lastClickTime, 'ms', '当前选中节点:', selectedNode ? selectedNode.name : 'none', '点击节点:', node.name);
+                        
+                        if (now - lastClickTime < 400 && selectedNode && selectedNode.id === node.id) {
                             // 双击 - 聚焦到节点，添加视觉反馈
+                            console.log('触发双击事件:', node.name);
                             event.target.style.transform = 'scale(1.05)';
                             setTimeout(() => {
                                 event.target.style.transform = '';
@@ -2348,6 +2537,7 @@
                             setStatus(`双击聚焦: ${node.name}`);
                         } else {
                             // 单击 - 选择节点
+                            console.log('触发单击事件:', node.name);
                             selectNode(node);
                             setStatus(`已选择: ${node.name}`);
                         }
@@ -2376,91 +2566,30 @@
             flameGraphContainer.style.cursor = 'default';
         }
 
-        // 鼠标滚轮缩放
+        // 鼠标滚轮垂直滚动
         function handleWheel(event) {
             event.preventDefault();
             
-            const rect = flameGraphContainer.getBoundingClientRect();
-            const mouseX = event.clientX - rect.left;
-            const mouseY = event.clientY - rect.top;
+            // 垂直滚动
+            const scrollAmount = event.deltaY;
+            panOffset.y -= scrollAmount * 0.5;
             
-            // 缩放点相对于当前视图的位置
-            const viewX = (mouseX - panOffset.x * zoomLevel) / zoomLevel;
-            const viewY = (mouseY - panOffset.y * zoomLevel) / zoomLevel;
-            
-            // 设置缩放因子
-            const factor = event.deltaY < 0 ? 1.1 : 0.9;
-            zoomLevel *= factor;
-            
-            // 限制最大和最小缩放级别
-            zoomLevel = Math.max(0.1, Math.min(5, zoomLevel));
-            
-            // 调整平移偏移量，使缩放点保持在相同位置
-            panOffset.x = (mouseX / zoomLevel - viewX);
-            panOffset.y = (mouseY / zoomLevel - viewY);
-            
-            flameGraph.style.transform = `scale(${zoomLevel}) translate(${panOffset.x}px, ${panOffset.y}px)`;
-        }
-
-        // 缩放火焰图
-        function zoomFlameGraph(factor) {
-            const oldZoom = zoomLevel;
-            zoomLevel *= factor;
-            zoomLevel = Math.max(0.1, Math.min(5, zoomLevel));
-            
-            // 调整平移偏移量，使视图中心保持不变
-            const rect = flameGraphContainer.getBoundingClientRect();
-            const centerX = rect.width / 2;
-            const centerY = rect.height / 2;
-            
-            const viewCenterX = (centerX - panOffset.x * oldZoom) / oldZoom;
-            const viewCenterY = (centerY - panOffset.y * oldZoom) / oldZoom;
-            
-            panOffset.x = (centerX / zoomLevel - viewCenterX);
-            panOffset.y = (centerY / zoomLevel - viewCenterY);
-            
-            flameGraph.style.transform = `scale(${zoomLevel}) translate(${panOffset.x}px, ${panOffset.y}px)`;
+            flameGraph.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px)`;
         }
 
         // 适应视图
         function fitFlameGraphToView() {
             if (!flameData) return;
             
-            const rect = flameGraphContainer.getBoundingClientRect();
-            const rowHeight = parseInt(rowHeightSlider.value);
+            // 重置水平位置居中，保持垂直位置不变
+            panOffset.x = 0;
             
-            // 计算当前可见的最大深度
-            function getMaxChildDepth(node) {
-                if (!node.children || node.children.length === 0) {
-                    return node.depth;
-                }
-                return Math.max(...node.children.map(getMaxChildDepth));
-            }
-            
-            const visibleDepth = focusedNode ? 
-                getMaxChildDepth(focusedNode) + 1 : 
-                maxDepth + 1;
-            
-            const graphHeight = visibleDepth * (rowHeight + 1) + 20;
-            const graphWidth = rect.width * 0.95;
-            
-            // 只计算水平方向的缩放因子，保持高度和位置不变
-            const scaleX = rect.width / graphWidth;
-            
-            // 只使用水平缩放因子进行宽度适配
-            zoomLevel = scaleX * 0.9;
-            
-            // 只调整水平居中，保持垂直位置不变
-            panOffset.x = (rect.width / zoomLevel - graphWidth) / 2;
-            // panOffset.y 保持当前值不变
-            
-            flameGraph.style.transform = `scale(${zoomLevel}) translate(${panOffset.x}px, ${panOffset.y}px)`;
+            flameGraph.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px)`;
         }
 
         // 重置视图
         function resetView() {
             // 重置所有状态
-            zoomLevel = 1;
             panOffset = { x: 0, y: 0 };
             searchInput.value = '';
             highlightedFunction = null;
@@ -2496,6 +2625,57 @@
             } catch (error) {
                 console.error('导出图片出错:', error);
                 setStatus(`导出错误: ${error.message}`);
+            }
+        }
+
+        // 下载当前数据
+        function downloadCurrentData() {
+            if (!flameData) {
+                setStatus('没有可下载的数据');
+                return;
+            }
+            
+            try {
+                setStatus('正在准备下载...');
+                
+                // 创建下载数据
+                const dataToDownload = {
+                    metadata: {
+                        exportTime: new Date().toISOString(),
+                        version: '1.0',
+                        description: '火焰图数据导出'
+                    },
+                    data: flameData
+                };
+                
+                // 转换为JSON字符串
+                const jsonString = JSON.stringify(dataToDownload, null, 2);
+                
+                // 创建Blob对象
+                const blob = new Blob([jsonString], { type: 'application/json' });
+                
+                // 创建下载链接
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                
+                // 生成文件名
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                link.download = `flame-graph-data-${timestamp}.json`;
+                
+                // 触发下载
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                // 清理URL对象
+                URL.revokeObjectURL(url);
+                
+                setStatus('数据已下载');
+                
+            } catch (error) {
+                console.error('下载数据出错:', error);
+                setStatus(`下载错误: ${error.message}`);
             }
         }
 
@@ -2672,8 +2852,17 @@
             const reader = new FileReader();
             reader.onload = (e) => {
                 const content = e.target.result;
-                const data = JSON.parse(content);
-                addDataToList(data, file.name);
+                try {
+                    const data = parseFlameData(content);
+                    if (data) {
+                        addDataToList(data, file.name);
+                        setStatus(`已加载文件: ${file.name}`);
+                    } else {
+                        setStatus(`文件格式不支持: ${file.name}`);
+                    }
+                } catch (error) {
+                    setStatus(`文件解析错误: ${error.message}`);
+                }
             };
             reader.readAsText(file);
         }
@@ -2709,14 +2898,12 @@
             resetViewBtn.addEventListener('click', resetView);
             fitViewBtn.addEventListener('click', fitFlameGraphToView);
             exportBtn.addEventListener('click', exportImage);
+            downloadDataBtn.addEventListener('click', downloadCurrentData);
             
-            // 缩放控件事件
-            // zoomInBtn.addEventListener('click', () => zoomFlameGraph(1.2));
-            // zoomOutBtn.addEventListener('click', () => zoomFlameGraph(0.8));
-            // zoomResetBtn.addEventListener('click', () => {
-            //     resetViewTransform();
-            //     setStatus('已重置缩放');
-            // });
+            // 数据聚合功能事件
+            flipDataBtn.addEventListener('click', handleReverseDataAggregation);
+            
+
             
             // 火焰图容器事件
             flameGraphContainer.addEventListener('mousedown', handleMouseDown);
@@ -2737,24 +2924,473 @@
         }
         
         
+        // 解析火焰图数据（支持多种格式）
+        function parseFlameData(content) {
+            if (!content || typeof content !== 'string') {
+                throw new Error('内容为空或格式无效');
+            }
+            
+            const trimmedContent = content.trim();
+            
+            // 尝试解析JSON格式
+            try {
+                return JSON.parse(trimmedContent);
+            } catch (jsonError) {
+                // JSON解析失败，尝试其他格式
+            }
+            
+            // 尝试解析CSV格式（简单的调用栈格式）
+            if (trimmedContent.includes(',') || trimmedContent.includes(';')) {
+                try {
+                    return parseCSVFormat(trimmedContent);
+                } catch (csvError) {
+                    // CSV解析失败
+                }
+            }
+            
+            // 尝试解析调用栈文本格式
+            if (trimmedContent.includes('\n') && (trimmedContent.includes('ms') || trimmedContent.includes('μs') || trimmedContent.includes('ns'))) {
+                try {
+                    return parseStackTraceFormat(trimmedContent);
+                } catch (stackError) {
+                    // 调用栈解析失败
+                }
+            }
+            
+            // 尝试修复常见的JSON格式问题
+            try {
+                return parseFlexibleJSON(trimmedContent);
+            } catch (flexError) {
+                throw new Error(`不支持的数据格式。支持的格式：JSON、CSV、调用栈文本`);
+            }
+        }
+        
+        // 解析CSV格式
+        function parseCSVFormat(content) {
+            const lines = content.split('\n').filter(line => line.trim());
+            if (lines.length === 0) throw new Error('CSV内容为空');
+            
+            const headers = lines[0].split(',').map(h => h.trim());
+            const nameIndex = headers.findIndex(h => h.toLowerCase().includes('name') || h.toLowerCase().includes('function'));
+            const durationIndex = headers.findIndex(h => h.toLowerCase().includes('duration') || h.toLowerCase().includes('time') || h.toLowerCase().includes('value'));
+            
+            if (nameIndex === -1) throw new Error('CSV中未找到函数名列');
+            if (durationIndex === -1) throw new Error('CSV中未找到时间/值列');
+            
+            const nodes = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',').map(v => v.trim());
+                if (values.length > Math.max(nameIndex, durationIndex)) {
+                    nodes.push({
+                        name: values[nameIndex],
+                        duration: parseFloat(values[durationIndex]) || 0,
+                        type: 'user'
+                    });
+                }
+            }
+            
+            return {
+                name: 'Root',
+                duration: nodes.reduce((sum, node) => sum + node.duration, 0),
+                children: nodes
+            };
+        }
+        
+        // 解析调用栈文本格式
+        function parseStackTraceFormat(content) {
+            const lines = content.split('\n').filter(line => line.trim());
+            const root = { name: 'Root', duration: 0, children: [] };
+            
+            lines.forEach(line => {
+                const match = line.match(/(.+?)\s+(\d+(?:\.\d+)?)\s*(ms|μs|ns|s)/i);
+                if (match) {
+                    const name = match[1].trim();
+                    let duration = parseFloat(match[2]);
+                    const unit = match[3].toLowerCase();
+                    
+                    // 转换为毫秒
+                    if (unit === 's') duration *= 1000;
+                    else if (unit === 'μs') duration /= 1000;
+                    else if (unit === 'ns') duration /= 1000000;
+                    
+                    root.children.push({
+                        name: name,
+                        duration: duration,
+                        type: name.includes('.') ? 'system' : 'user'
+                    });
+                    root.duration += duration;
+                }
+            });
+            
+            return root;
+        }
+        
+        // 解析灵活的JSON格式（修复常见问题）
+        function parseFlexibleJSON(content) {
+            // 尝试修复常见的JSON格式问题
+            let fixedContent = content
+                .replace(/'/g, '"')  // 单引号转双引号
+                .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')  // 属性名加引号
+                .replace(/,\s*}/g, '}')  // 移除尾随逗号
+                .replace(/,\s*]/g, ']'); // 移除数组尾随逗号
+            
+            return JSON.parse(fixedContent);
+        }
+        
         // 处理JSON粘贴
         function handleJsonPaste() {
             const jsonText = jsonTextarea.value.trim();
             if (jsonText) {
                 try {
-                    const data = JSON.parse(jsonText);
+                    const data = parseFlameData(jsonText);
                     const timestamp = new Date().toLocaleTimeString();
                     addDataToList(data, `粘贴数据_${timestamp}`);
                     // 清空文本框
                     jsonTextarea.value = '';
+                    setStatus('数据解析成功');
                 } catch (error) {
-                    setStatus(`JSON解析错误: ${error.message}`);
+                    setStatus(`数据解析错误: ${error.message}`);
                 }
             } else {
-                setStatus('请输入JSON数据');
+                setStatus('请输入数据');
             }
         }
 
+        // 数据倒转功能
+        function handleReverseDataAggregation() {
+            if (!flameData) {
+                setStatus('请先加载数据');
+                return;
+            }
+            
+            const aggregationInfo = document.querySelector('.aggregation-info');
+            
+            try {
+                const reversedData = reverseCallStack(flameData);
+                const resultMessage = '已完成数据倒转';
+                
+                // 更新数据并重新渲染
+                const timestamp = new Date().toLocaleTimeString();
+                addDataToList(reversedData, `倒转数据_${timestamp}`);
+                
+                // 显示结果信息
+                aggregationResult.textContent = resultMessage;
+                aggregationInfo.style.display = 'block';
+                
+                setStatus(resultMessage);
+                
+                // 3秒后隐藏结果信息
+                setTimeout(() => {
+                    aggregationInfo.style.display = 'none';
+                }, 3000);
+                
+            } catch (error) {
+                setStatus(`聚合操作失败: ${error.message}`);
+                aggregationResult.textContent = `错误: ${error.message}`;
+                aggregationInfo.style.display = 'block';
+            }
+        }
+        
+        // 调用栈倒转功能
+        function reverseCallStack(data) {
+            const clonedData = JSON.parse(JSON.stringify(data));
+            
+            // 首先建立节点映射，用于快速查找原始节点信息
+            const nodeMap = new Map();
+            
+            function buildNodeMap(node, path = []) {
+                const nodePath = [...path, node.name];
+                const nodeKey = nodePath.join('>');
+                nodeMap.set(nodeKey, {
+                    ...node,
+                    path: nodePath
+                });
+                
+                if (node.children) {
+                    node.children.forEach(child => buildNodeMap(child, nodePath));
+                }
+            }
+            
+            buildNodeMap(clonedData);
+            
+            // 收集所有从根到叶子的完整路径，包括非叶子节点的self时间路径
+            function collectAllPaths(node, currentPath = []) {
+                const newPath = [...currentPath, {
+                    name: node.name,
+                    duration: node.duration || 0,
+                    type: node.type || 'user',
+                    startTime: node.startTime || 0,
+                    originalNode: node
+                }];
+                
+                let allPaths = [];
+                
+                if (!node.children || node.children.length === 0) {
+                    // 叶子节点，返回完整路径
+                    allPaths.push(newPath);
+                } else {
+                    // 非叶子节点：先收集子路径
+                    node.children.forEach(child => {
+                        const childPaths = collectAllPaths(child, newPath);
+                        allPaths = allPaths.concat(childPaths);
+                    });
+                    
+                    // 计算当前节点的self时间
+                    const childrenTotalTime = node.children.reduce((sum, child) => {
+                        return sum + (child.duration || 0);
+                    }, 0);
+                    const selfTime = Math.max(0, (node.duration || 0) - childrenTotalTime);
+                    
+                    // 如果self时间大于0，为当前节点创建一个独立的路径（只包含到当前节点的路径，时间为self时间）
+                    if (selfTime > 0) {
+                        // 创建一个新的路径，最后一个节点的duration设为selfTime
+                        const selfPath = newPath.map((pathNode, index) => {
+                            if (index === newPath.length - 1) {
+                                // 最后一个节点（当前节点）的duration设为selfTime
+                                return {
+                                    ...pathNode,
+                                    duration: selfTime,
+                                    isSelfTime: true
+                                };
+                            }
+                            return pathNode;
+                        });
+                        allPaths.push(selfPath);
+                        console.log('添加self时间路径:', selfPath.map(n => n.name).join(' -> '), '时间:', selfTime);
+                    }
+                }
+                
+                return allPaths;
+            }
+            
+            // 计算每个节点的self时间
+            function calculateSelfTimes(path) {
+                const pathWithSelfTime = [];
+                
+                for (let i = 0; i < path.length; i++) {
+                    const pathNode = path[i];
+                    const originalNode = pathNode.originalNode;
+                    let selfTime;
+                    
+                    // 如果是self时间节点，直接使用其duration
+                    if (pathNode.isSelfTime) {
+                        selfTime = pathNode.duration;
+                    } else {
+                        // 计算原始节点的所有直接子节点的总时间
+                        selfTime = originalNode.duration || 0;
+                        if (originalNode.children && originalNode.children.length > 0) {
+                            const childrenTotalTime = originalNode.children.reduce((sum, child) => {
+                                return sum + (child.duration || 0);
+                            }, 0);
+                            selfTime = Math.max(0, selfTime - childrenTotalTime);
+                        }
+                    }
+                    
+                    pathWithSelfTime.push({
+                        name: pathNode.name,
+                        duration: pathNode.duration,
+                        type: pathNode.type,
+                        selfTime: selfTime
+                    });
+                }
+                
+                return pathWithSelfTime;
+            }
+            
+            const allPaths = collectAllPaths(clonedData);
+            
+            // 添加日志分析
+            console.log('=== 倒转数据分析 ===');
+            console.log('原始数据根节点:', clonedData.name);
+            console.log('收集到的路径数量:', allPaths.length);
+            console.log('前3条路径示例:');
+            allPaths.slice(0, 3).forEach((path, index) => {
+                console.log(`路径${index + 1}:`, path.map(node => node.name).join(' -> '));
+            });
+            
+            // 为每个路径创建倒转后的树结构
+            const reversedTrees = allPaths.map(path => {
+                const pathWithSelfTime = calculateSelfTimes(path);
+                // 倒转路径：叶子节点变成根节点
+                const reversedPath = [...pathWithSelfTime].reverse();
+                
+                console.log('倒转前路径:', pathWithSelfTime.map(node => node.name).join(' -> '));
+                console.log('倒转后路径:', reversedPath.map(node => node.name).join(' -> '));
+                
+                let currentNode = null;
+                
+                // 从叶子节点开始构建倒转的树
+                let rootNode = null;
+                reversedPath.forEach((pathNode, index) => {
+                    const newNode = {
+                        name: pathNode.name,
+                        duration: pathNode.duration, // 使用原始duration，不是selfTime
+                        startTime: 0,
+                        type: pathNode.type,
+                        children: [],
+                        selfTime: pathNode.selfTime // 保留selfTime信息用于显示
+                    };
+                    
+                    if (index === 0) {
+                        // 第一个节点是新的根节点（原来的叶子节点）
+                        rootNode = newNode;
+                        currentNode = newNode;
+                    } else {
+                        // 后续节点作为前一个节点的子节点
+                        currentNode.children = [newNode];
+                        currentNode = newNode;
+                    }
+                });
+                
+                console.log('构建的树根节点:', rootNode ? rootNode.name : 'null', '时间:', rootNode ? rootNode.duration : 'null');
+                return rootNode;
+            });
+            
+            console.log('倒转后的树根节点:', reversedTrees.map(tree => tree ? tree.name : 'null'));
+            
+            // 合并相邻的同名节点
+            function mergeAdjacentNodes(children) {
+                if (!children || children.length <= 1) {
+                    return children;
+                }
+                
+                const merged = [];
+                let i = 0;
+                
+                while (i < children.length) {
+                    let currentNode = { ...children[i], children: [...children[i].children] };
+                    let j = i + 1;
+                    
+                    // 查找相邻的同名节点
+                    while (j < children.length && children[j].name === currentNode.name) {
+                        // 合并duration
+                        currentNode.duration += children[j].duration;
+                        
+                        // 合并子节点
+                        const childrenMap = new Map();
+                        
+                        // 添加当前节点的子节点
+                        currentNode.children.forEach(child => {
+                            childrenMap.set(child.name, { ...child, children: [...child.children] });
+                        });
+                        
+                        // 合并下一个节点的子节点
+                        children[j].children.forEach(child => {
+                            if (childrenMap.has(child.name)) {
+                                const existingChild = childrenMap.get(child.name);
+                                existingChild.duration += child.duration;
+                                existingChild.children = existingChild.children.concat(child.children);
+                            } else {
+                                childrenMap.set(child.name, { ...child, children: [...child.children] });
+                            }
+                        });
+                        
+                        currentNode.children = Array.from(childrenMap.values());
+                        j++;
+                    }
+                    
+                    // 递归处理子节点
+                    currentNode.children = mergeAdjacentNodes(currentNode.children);
+                    
+                    // 重新计算子节点的startTime
+                    let currentTime = 0;
+                    currentNode.children.forEach(child => {
+                        child.startTime = currentTime;
+                        currentTime += child.duration;
+                    });
+                    
+                    merged.push(currentNode);
+                    i = j;
+                }
+                
+                return merged;
+            }
+            
+            // 深度合并相同名称的根节点和子树
+            function mergeNodes(node1, node2) {
+                // 合并两个节点的duration
+                node1.duration += node2.duration;
+                
+                // 合并子节点
+                const childrenMap = new Map();
+                
+                // 先添加node1的子节点
+                node1.children.forEach(child => {
+                    childrenMap.set(child.name, { ...child, children: [...child.children] });
+                });
+                
+                // 合并node2的子节点
+                node2.children.forEach(child => {
+                    if (childrenMap.has(child.name)) {
+                        // 递归合并相同名称的子节点
+                        mergeNodes(childrenMap.get(child.name), child);
+                    } else {
+                        childrenMap.set(child.name, { ...child, children: [...child.children] });
+                    }
+                });
+                
+                node1.children = Array.from(childrenMap.values());
+                
+                // 合并相邻的同名子节点
+                node1.children = mergeAdjacentNodes(node1.children);
+                
+                // 重新计算子节点的startTime
+                let currentTime = 0;
+                node1.children.forEach(child => {
+                    child.startTime = currentTime;
+                    currentTime += child.duration;
+                });
+            }
+            
+            const mergedRoots = new Map();
+            
+            reversedTrees.forEach(tree => {
+                if (tree) {
+                    const rootName = tree.name;
+                    if (mergedRoots.has(rootName)) {
+                        const existingRoot = mergedRoots.get(rootName);
+                        mergeNodes(existingRoot, tree);
+                    } else {
+                        mergedRoots.set(rootName, { ...tree, children: [...tree.children] });
+                    }
+                }
+            });
+            
+            console.log('合并后的根节点名称:', Array.from(mergedRoots.keys()));
+            
+            // 直接返回合并后的根节点数组，不再创建新的包装根节点
+            let newRootChildren = Array.from(mergedRoots.values());
+            
+            // 对根节点也应用相邻节点合并
+            newRootChildren = mergeAdjacentNodes(newRootChildren);
+            
+            let currentTime = 0;
+            newRootChildren.forEach(child => {
+                child.startTime = currentTime;
+                currentTime += child.duration;
+            });
+            
+            console.log('最终返回的根节点数量:', newRootChildren.length);
+            console.log('最终根节点名称:', newRootChildren.map(child => child.name));
+            
+            // 如果只有一个根节点，直接返回它；如果有多个，创建一个虚拟根节点
+            if (newRootChildren.length === 1) {
+                console.log('返回单个根节点:', newRootChildren[0].name);
+                return newRootChildren[0];
+            } else {
+                console.log('返回多个根节点，创建虚拟根节点');
+                return {
+                    name: '倒转调用栈 (多个根节点)',
+                    duration: newRootChildren.reduce((sum, child) => sum + child.duration, 0),
+                    startTime: 0,
+                    type: 'root',
+                    children: newRootChildren
+                };
+            }
+        }
+        
+
+        
         // 初始化
         init();
         
